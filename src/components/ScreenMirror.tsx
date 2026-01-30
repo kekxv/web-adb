@@ -20,18 +20,21 @@ interface ScreenMirrorProps {
 
 const SCRCPY_SERVER_URL = 'scrcpy-server.jar';
 const SCRCPY_VERSION = '3.3.4';
+// 定义窗口的最长边（像素），无论是横屏还是竖屏，最长的一边不会超过这个值
+const MAX_WINDOW_SIZE = 760;
 
 export default function ScreenMirror({adb, onClose}: ScreenMirrorProps) {
     const {t} = useI18n();
     const videoContainerRef = useRef<HTMLDivElement>(null);
     const mainContainerRef = useRef<HTMLDivElement>(null);
 
-    // --- 核心状态 ---
+    // --- 状态管理 ---
     const [initialPos] = useState({x: 100, y: 100});
-    // 增加这个状态来控制拖拽时的样式优化
+    // 动态窗口大小，默认为竖屏尺寸
+    const [windowSize, setWindowSize] = useState({width: 360, height: 760});
     const [isDraggingState, setIsDraggingState] = useState(false);
 
-    // Ref 存储坐标，用于高性能计算
+    // Ref 存储拖拽坐标
     const dragRef = useRef({
         startX: 0,
         startY: 0,
@@ -52,11 +55,10 @@ export default function ScreenMirror({adb, onClose}: ScreenMirrorProps) {
     const rendererRef = useRef<WebGLVideoFrameRenderer | null>(null);
     const videoSizeRef = useRef({width: 0, height: 0});
 
-    // --- 极速拖拽逻辑 ---
+    // --- GPU 极速拖拽逻辑  ---
     const updatePosition = () => {
         if (!mainContainerRef.current) return;
         const {currentX, currentY} = dragRef.current;
-        // 使用 translate3d 开启 GPU 加速
         mainContainerRef.current.style.transform = `translate3d(${currentX}px, ${currentY}px, 0)`;
         dragRef.current.frameId = 0;
     };
@@ -64,7 +66,6 @@ export default function ScreenMirror({adb, onClose}: ScreenMirrorProps) {
     const handleMouseDown = (e: React.MouseEvent) => {
         if ((e.target as HTMLElement).closest('.drag-handle')) {
             e.preventDefault();
-            // 触发 React 状态更新，用于切换 CSS 类（禁用 pointer-events 等）
             setIsDraggingState(true);
 
             dragRef.current.startX = e.clientX;
@@ -72,7 +73,6 @@ export default function ScreenMirror({adb, onClose}: ScreenMirrorProps) {
             dragRef.current.lastX = dragRef.current.currentX;
             dragRef.current.lastY = dragRef.current.currentY;
 
-            // 强制立即移除 transition，防止拖拽开始时有延迟
             if (mainContainerRef.current) {
                 mainContainerRef.current.style.transition = 'none';
             }
@@ -114,6 +114,7 @@ export default function ScreenMirror({adb, onClose}: ScreenMirrorProps) {
         };
     }, [handleGlobalMouseMove, handleGlobalMouseUp]);
 
+    // --- 触摸事件注入  ---
     const injectTouch = useCallback(async (action: AndroidMotionEventAction, e: MouseEvent | TouchEvent) => {
         const client = clientRef.current;
         const renderer = rendererRef.current;
@@ -135,6 +136,7 @@ export default function ScreenMirror({adb, onClose}: ScreenMirrorProps) {
 
         const offsetX = clientX - rect.left;
         const offsetY = clientY - rect.top;
+        // 这里的计算是基于比例的，所以只要 rect 和 videoSize 更新正确，触摸就永远准确
         const x = (offsetX / rect.width) * videoSizeRef.current.width;
         const y = (offsetY / rect.height) * videoSizeRef.current.height;
 
@@ -170,10 +172,12 @@ export default function ScreenMirror({adb, onClose}: ScreenMirrorProps) {
                 if (!response.ok) throw new Error('Failed to fetch scrcpy-server.jar');
                 const buffer = await response.arrayBuffer();
                 if (!active) return;
+
                 await AdbScrcpyClient.pushServer(adb, new PushReadableStream<Uint8Array>(async (controller) => {
                     await controller.enqueue(new Uint8Array(buffer));
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 }) as any);
+
                 const options = new AdbScrcpyOptionsLatest({
                     video: true,
                     audio: false,
@@ -183,20 +187,22 @@ export default function ScreenMirror({adb, onClose}: ScreenMirrorProps) {
                     tunnelForward: true,
                 });
                 Object.defineProperty(options, 'version', {value: SCRCPY_VERSION});
+
                 const client = await AdbScrcpyClient.start(adb, '/data/local/tmp/scrcpy-server.jar', options);
                 clientRef.current = client;
+
                 client.output.pipeTo(new WritableStream({
                     write(line) {
-                        if (line.includes('INJECT_EVENTS permission')) {
-                            setPermissionWarning(true);
-                        }
+                        if (line.includes('INJECT_EVENTS permission')) setPermissionWarning(true);
                     }
                 })).catch(() => {
                 });
+
                 if (!active) {
                     client.close();
                     return;
                 }
+
                 const videoStream = await client.videoStream;
                 if (videoStream) {
                     const renderer = new WebGLVideoFrameRenderer();
@@ -206,9 +212,29 @@ export default function ScreenMirror({adb, onClose}: ScreenMirrorProps) {
                         renderer
                     });
                     decoderRef.current = decoder;
+
+                    // --- 监听视频流尺寸变化，自动旋转窗口 ---
                     decoder.sizeChanged(() => {
-                        videoSizeRef.current = {width: decoder.width, height: decoder.height};
+                        const {width, height} = decoder;
+                        videoSizeRef.current = {width, height};
+
+                        // 计算新的显示尺寸
+                        let newWidth, newHeight;
+                        if (width > height) {
+                            // 横屏模式：宽度最大为 MAX_WINDOW_SIZE，高度按比例缩放
+                            // 如果你想要横屏更大一点，可以单独设一个 MAX_LANDSCAPE_WIDTH
+                            newWidth = MAX_WINDOW_SIZE;
+                            newHeight = Math.round(MAX_WINDOW_SIZE * (height / width));
+                        } else {
+                            // 竖屏模式：高度最大为 MAX_WINDOW_SIZE，宽度按比例缩放
+                            newHeight = MAX_WINDOW_SIZE;
+                            newWidth = Math.round(MAX_WINDOW_SIZE * (width / height));
+                        }
+
+                        // 更新 React 状态，触发窗口大小重绘
+                        setWindowSize({width: newWidth, height: newHeight});
                     });
+
                     if (videoContainerRef.current) {
                         videoContainerRef.current.innerHTML = '';
                         const canvas = renderer.canvas as HTMLCanvasElement;
@@ -216,6 +242,7 @@ export default function ScreenMirror({adb, onClose}: ScreenMirrorProps) {
                         canvas.style.width = '100%';
                         canvas.style.height = '100%';
                         canvas.style.objectFit = 'contain';
+
                         canvas.onmousedown = (e) => {
                             injectTouch(AndroidMotionEventAction.Down, e);
                             const onMouseMove = (me: MouseEvent) => {
@@ -279,29 +306,23 @@ export default function ScreenMirror({adb, onClose}: ScreenMirrorProps) {
     return (
         <div
             ref={mainContainerRef}
-            // 移除了 transition-all, duration-200.
-            // 只保留必要的布局类。animate-in 仍然可以用，但它通常只在挂载时生效。
             className={`fixed z-[200] bg-[#0a0a0a] rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.5)] border border-white/10 overflow-hidden flex flex-col animate-in fade-in zoom-in ${
-                // 拖拽时，降低阴影复杂度，提升渲染性能
                 isDraggingState ? 'shadow-none' : ''
             }`}
             onContextMenu={(e) => e.preventDefault()}
             style={{
                 left: initialPos.x,
                 top: initialPos.y,
-                width: '360px',
-                height: '760px',
-                // 强制开启 GPU 独立层
-                willChange: 'transform',
-                // 绝对禁止 transition，这是不跟手的罪魁祸首！
+                // 使用动态计算的宽高
+                width: `${windowSize.width}px`,
+                height: `${windowSize.height}px`,
+                willChange: 'transform, width, height', // 增加宽高变化的硬件加速提示
                 transition: 'none',
-                // 拖拽时禁用内部所有鼠标事件，防止 iframe/canvas 抢夺资源
                 pointerEvents: isDraggingState ? 'none' : 'auto'
             }}
         >
             <div
                 onMouseDown={handleMouseDown}
-                // 拖拽手柄需要 pointer-events: auto 才能接收事件，即使父元素禁用了
                 style={{pointerEvents: 'auto'}}
                 className="drag-handle h-12 bg-gradient-to-b from-gray-800 to-gray-900 border-b border-white/5 flex items-center justify-between px-4 cursor-grab active:cursor-grabbing flex-shrink-0 select-none"
             >
@@ -335,6 +356,7 @@ export default function ScreenMirror({adb, onClose}: ScreenMirrorProps) {
                             className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">{t.mirrorLoading}</span>
                     </div>
                 )}
+
                 {error && (
                     <div
                         className="absolute inset-0 z-40 bg-black/90 backdrop-blur-sm flex flex-col items-center justify-center p-8 text-center">
@@ -345,6 +367,7 @@ export default function ScreenMirror({adb, onClose}: ScreenMirrorProps) {
                                 className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-lg transition-all">{t.reconnect}</button>
                     </div>
                 )}
+
                 {permissionWarning && !error && (
                     <div
                         className="absolute top-4 left-4 right-4 z-50 bg-orange-500/90 backdrop-blur-md border border-orange-400/50 p-3 rounded-xl shadow-2xl flex items-start gap-3">
