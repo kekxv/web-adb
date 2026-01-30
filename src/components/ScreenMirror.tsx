@@ -110,6 +110,7 @@ export default function ScreenMirror({adb, onClose}: ScreenMirrorProps) {
         return () => {
             window.removeEventListener('mousemove', handleGlobalMouseMove);
             window.removeEventListener('mouseup', handleGlobalMouseUp);
+            // eslint-disable-next-line react-hooks/exhaustive-deps
             if (dragRef.current.frameId !== 0) cancelAnimationFrame(dragRef.current.frameId);
         };
     }, [handleGlobalMouseMove, handleGlobalMouseUp]);
