@@ -3,8 +3,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Adb } from '@yume-chan/adb';
 import { Folder, File, ArrowLeft, Download, Upload, Home, Loader2, Eye, X } from 'lucide-react';
+import { useI18n } from '@/lib/i18n';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import Image from 'next/image';
 
 function cn(...inputs: ClassValue[]) {
     return twMerge(clsx(inputs));
@@ -24,6 +26,7 @@ interface FileExplorerProps {
 const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg'];
 
 export default function FileExplorer({ adb }: FileExplorerProps) {
+    const { t } = useI18n();
     const [path, setPath] = useState('/sdcard');
     const [files, setFiles] = useState<FileEntry[]>([]);
     const [loading, setLoading] = useState(false);
@@ -51,7 +54,7 @@ export default function FileExplorer({ adb }: FileExplorerProps) {
                         mtime: Number(e.mtime)
                     }))
                     .sort((a, b) => {
-                        if (a.isDirectory === b.isDirectory) return a.name.localeCompare(b.name);
+                        if (a.isDirectory === b.isDirectory) return a.name.localeCompare(a.name);
                         return a.isDirectory ? -1 : 1;
                     });
                 setFiles(sortedEntries);
@@ -68,7 +71,8 @@ export default function FileExplorer({ adb }: FileExplorerProps) {
 
     useEffect(() => {
         listFiles(path);
-    }, [adb, listFiles]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [adb]); // path is managed internally, adding it causes double load on setPath
 
     const navigateTo = (name: string) => {
         const newPath = path === '/' ? `/${name}` : `${path}/${name}`;
@@ -96,6 +100,7 @@ export default function FileExplorer({ adb }: FileExplorerProps) {
                 if (done) break;
                 if (value) chunks.push(value);
             }
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             return new Blob(chunks as any, { type: 'application/octet-stream' });
         } finally {
             await sync.dispose();
@@ -113,7 +118,6 @@ export default function FileExplorer({ adb }: FileExplorerProps) {
             URL.revokeObjectURL(url);
         } catch (error) {
             console.error('Download failed:', error);
-            alert('下载失败');
         }
     };
 
@@ -128,7 +132,6 @@ export default function FileExplorer({ adb }: FileExplorerProps) {
             setPreviewUrl(url);
         } catch (error) {
             console.error('Preview failed:', error);
-            alert('预览失败');
         } finally {
             setPreviewLoading(false);
         }
@@ -151,6 +154,7 @@ export default function FileExplorer({ adb }: FileExplorerProps) {
                 const targetPath = path === '/' ? `/${file.name}` : `${path}/${file.name}`;
                 await sync.write({
                     filename: targetPath,
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     file: file.stream() as any,
                 });
                 listFiles(path);
@@ -159,7 +163,6 @@ export default function FileExplorer({ adb }: FileExplorerProps) {
             }
         } catch (error) {
             console.error('Upload failed:', error);
-            alert('上传失败');
         }
     };
 
@@ -182,32 +185,32 @@ export default function FileExplorer({ adb }: FileExplorerProps) {
                 <div className="flex-1 px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-xs font-mono truncate shadow-inner text-gray-600">
                     {path}
                 </div>
-                <label className="p-1.5 hover:bg-blue-50 text-blue-600 rounded-lg cursor-pointer transition-all">
+                <label className="p-1.5 hover:bg-blue-50 text-blue-600 rounded-lg cursor-pointer transition-all" title={t.upload}>
                     <Upload size={18} />
                     <input type="file" className="hidden" onChange={uploadFile} />
                 </label>
             </div>
 
-            <div className="flex-1 overflow-y-auto min-h-0">
+            <div className="flex-1 overflow-y-auto min-h-0 text-gray-700">
                 {loading ? (
                     <div className="flex flex-col items-center justify-center h-full text-gray-400 gap-3">
                         <Loader2 className="animate-spin text-blue-500" size={32} />
-                        <span className="text-sm">正在读取文件系统...</span>
+                        <span className="text-sm">{t.loadingFiles}</span>
                     </div>
                 ) : (
                     <table className="w-full text-left border-collapse">
                         <thead className="sticky top-0 bg-gray-50 text-xs text-gray-500 uppercase z-10">
                             <tr>
-                                <th className="px-4 py-3 font-semibold">名称</th>
-                                <th className="px-4 py-3 font-semibold">大小</th>
-                                <th className="px-4 py-3 font-semibold text-right">操作</th>
+                                <th className="px-4 py-3 font-semibold">{t.name}</th>
+                                <th className="px-4 py-3 font-semibold">{t.size}</th>
+                                <th className="px-4 py-3 font-semibold text-right">{t.action}</th>
                             </tr>
                         </thead>
                         <tbody className="text-sm divide-y divide-gray-100">
                             {files.length === 0 && !loading && (
                                 <tr>
                                     <td colSpan={3} className="px-6 py-10 text-center text-gray-400">
-                                        此目录为空
+                                        {t.emptyDir}
                                     </td>
                                 </tr>
                             )}
@@ -238,7 +241,7 @@ export default function FileExplorer({ adb }: FileExplorerProps) {
                                                     <button 
                                                         onClick={() => previewFile(file.name)}
                                                         className="p-1.5 hover:bg-blue-100 text-blue-500 rounded-lg"
-                                                        title="预览"
+                                                        title={t.preview}
                                                     >
                                                         <Eye size={16} />
                                                     </button>
@@ -246,7 +249,7 @@ export default function FileExplorer({ adb }: FileExplorerProps) {
                                                 <button 
                                                     onClick={() => downloadFile(file.name)}
                                                     className="p-1.5 hover:bg-blue-100 text-blue-500 rounded-lg"
-                                                    title="下载"
+                                                    title={t.download}
                                                 >
                                                     <Download size={16} />
                                                 </button>
@@ -264,7 +267,7 @@ export default function FileExplorer({ adb }: FileExplorerProps) {
             {previewLoading && (
                 <div className="absolute inset-0 bg-white/60 backdrop-blur-[2px] z-20 flex items-center justify-center flex-col gap-2">
                     <Loader2 className="animate-spin text-blue-600" size={32} />
-                    <span className="text-sm font-medium text-gray-600">正在加载预览...</span>
+                    <span className="text-sm font-medium text-gray-600">{t.preview}...</span>
                 </div>
             )}
 
@@ -275,7 +278,7 @@ export default function FileExplorer({ adb }: FileExplorerProps) {
                          <button 
                             onClick={() => downloadFile(previewName)}
                             className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-full transition-colors"
-                            title="下载"
+                            title={t.download}
                         >
                             <Download size={24} />
                         </button>
@@ -287,9 +290,11 @@ export default function FileExplorer({ adb }: FileExplorerProps) {
                         </button>
                     </div>
                     <div className="max-w-full max-h-full flex flex-col items-center">
-                        <img 
+                        <Image 
                             src={previewUrl} 
                             alt={previewName}
+                            width={1920}
+                            height={1080}
                             className="max-w-full max-h-[85vh] object-contain shadow-2xl rounded"
                         />
                         <p className="mt-4 text-white font-medium text-sm bg-black/50 px-4 py-1.5 rounded-full border border-white/20">

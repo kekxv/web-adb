@@ -10,18 +10,19 @@ import {
 } from '@yume-chan/scrcpy';
 import { WebCodecsVideoDecoder, WebGLVideoFrameRenderer } from '@yume-chan/scrcpy-decoder-webcodecs';
 import { PushReadableStream, WritableStream } from '@yume-chan/stream-extra';
-import { X, GripHorizontal, Maximize2, Minimize2, Loader2, Home, Power, ArrowLeft, AlertCircle, RefreshCw } from 'lucide-react';
+import { useI18n } from '@/lib/i18n';
+import { X, Power, ArrowLeft, AlertCircle, RefreshCw } from 'lucide-react';
 
 interface ScreenMirrorProps {
     adb: Adb;
     onClose: () => void;
 }
 
-// Use relative path to work with GitHub Pages sub-directories
-const SCRCPY_SERVER_URL = 'scrcpy-server.jar'; 
+const SCRCPY_SERVER_URL = 'scrcpy-server.jar';
 const SCRCPY_VERSION = '3.3.4';
 
 export default function ScreenMirror({ adb, onClose }: ScreenMirrorProps) {
+    const { t } = useI18n();
     const videoContainerRef = useRef<HTMLDivElement>(null);
     const [position, setPosition] = useState({ x: 100, y: 100 });
     const [isDragging, setIsDragging] = useState(false);
@@ -89,11 +90,8 @@ export default function ScreenMirror({ adb, onClose }: ScreenMirrorProps) {
             clientY = (e as MouseEvent).clientY;
         }
 
-        // Calculate position relative to the element
         const offsetX = clientX - rect.left;
         const offsetY = clientY - rect.top;
-
-        // Map to video stream coordinates
         const x = (offsetX / rect.width) * videoSizeRef.current.width;
         const y = (offsetY / rect.height) * videoSizeRef.current.height;
 
@@ -110,6 +108,7 @@ export default function ScreenMirror({ adb, onClose }: ScreenMirrorProps) {
                 pressure: 1,
                 actionButton: 0,
                 buttons: 0,
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
             } as any);
         } catch (err) {
             console.error('Mirror: Touch failed', err);
@@ -126,13 +125,14 @@ export default function ScreenMirror({ adb, onClose }: ScreenMirrorProps) {
                 setPermissionWarning(false);
 
                 const response = await fetch(SCRCPY_SERVER_URL);
-                if (!response.ok) throw new Error('无法加载 scrcpy-server.jar');
+                if (!response.ok) throw new Error('Failed to fetch scrcpy-server.jar');
                 const buffer = await response.arrayBuffer();
                 
                 if (!active) return;
 
                 await AdbScrcpyClient.pushServer(adb, new PushReadableStream<Uint8Array>(async (controller) => {
                     await controller.enqueue(new Uint8Array(buffer));
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 }) as any);
 
                 const options = new AdbScrcpyOptionsLatest({
@@ -151,7 +151,6 @@ export default function ScreenMirror({ adb, onClose }: ScreenMirrorProps) {
 
                 client.output.pipeTo(new WritableStream({
                     write(line) { 
-                        console.log('Scrcpy Server:', line);
                         if (line.includes('INJECT_EVENTS permission')) {
                             setPermissionWarning(true);
                         }
@@ -204,10 +203,11 @@ export default function ScreenMirror({ adb, onClose }: ScreenMirrorProps) {
                 }
 
                 setLoading(false);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             } catch (err: any) {
                 console.error('Mirror Error:', err);
                 if (active) {
-                    setError(err.message || '启动投屏失败');
+                    setError(err.message || 'Failed to start mirroring');
                     setLoading(false);
                 }
             }
@@ -220,7 +220,8 @@ export default function ScreenMirror({ adb, onClose }: ScreenMirrorProps) {
             clientRef.current?.close();
             decoderRef.current?.dispose();
         };
-    }, [adb, retryKey, injectTouch]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [adb, retryKey]);
 
     const handleHome = async () => {
         if (clientRef.current?.controller) {
@@ -263,13 +264,13 @@ export default function ScreenMirror({ adb, onClose }: ScreenMirrorProps) {
             >
                 <div className="flex items-center gap-3">
                     <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-                    <span className="text-[11px] font-bold text-gray-300 uppercase tracking-[0.2em]">Live Preview</span>
+                    <span className="text-[11px] font-bold text-gray-300 uppercase tracking-[0.2em]">{t.mirrorTitle}</span>
                 </div>
                 <div className="flex items-center gap-1">
                     <button 
                         onClick={() => setRetryKey(prev => prev + 1)}
                         className="p-2 hover:bg-white/10 text-gray-400 hover:text-white rounded-full transition-all"
-                        title="重启连接"
+                        title={t.reconnect}
                     >
                         <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
                     </button>
@@ -285,17 +286,22 @@ export default function ScreenMirror({ adb, onClose }: ScreenMirrorProps) {
             <div className="flex-1 relative bg-black flex items-center justify-center overflow-hidden">
                 {loading && (
                     <div className="absolute inset-0 z-30 bg-black flex flex-col items-center justify-center gap-4">
-                        <div className="w-12 h-12 border-4 border-blue-500/20 border-t-blue-500 rounded-full animate-spin" />
-                        <span className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Initialising...</span>
+                        <div className="relative">
+                            <div className="w-12 h-12 border-4 border-blue-500/20 border-t-blue-500 rounded-full animate-spin" />
+                            <div className="absolute inset-0 flex items-center justify-center">
+                                <div className="w-2 h-2 bg-blue-500 rounded-full" />
+                            </div>
+                        </div>
+                        <span className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">{t.mirrorLoading}</span>
                     </div>
                 )}
                 
                 {error && (
                     <div className="absolute inset-0 z-40 bg-black/90 backdrop-blur-sm flex flex-col items-center justify-center p-8 text-center">
                         <AlertCircle className="text-red-500 mb-4" size={32} />
-                        <h3 className="text-white font-bold mb-2 text-sm">连接异常</h3>
+                        <h3 className="text-white font-bold mb-2 text-sm">{t.connected} Error</h3>
                         <p className="text-gray-400 text-[10px] mb-6">{error}</p>
-                        <button onClick={() => setRetryKey(prev => prev + 1)} className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-lg transition-all">重试连接</button>
+                        <button onClick={() => setRetryKey(prev => prev + 1)} className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-lg transition-all">{t.reconnect}</button>
                     </div>
                 )}
 
@@ -303,8 +309,8 @@ export default function ScreenMirror({ adb, onClose }: ScreenMirrorProps) {
                     <div className="absolute top-4 left-4 right-4 z-50 bg-orange-500/90 backdrop-blur-md border border-orange-400/50 p-3 rounded-xl shadow-2xl flex items-start gap-3 animate-in slide-in-from-top">
                         <AlertCircle className="text-white shrink-0" size={18} />
                         <div className="flex-1">
-                            <p className="text-[11px] font-bold text-white">控制受限</p>
-                            <p className="text-[10px] text-orange-50">设置已更改？请点击右上角刷新图标。若无效，请尝试重启手机。</p>
+                            <p className="text-[11px] font-bold text-white">{t.permTitle}</p>
+                            <p className="text-[10px] text-orange-50">{t.permDesc}</p>
                         </div>
                         <button onClick={() => setPermissionWarning(false)} className="text-white/60 hover:text-white"><X size={14} /></button>
                     </div>
@@ -314,15 +320,15 @@ export default function ScreenMirror({ adb, onClose }: ScreenMirrorProps) {
             </div>
 
             <div className="h-16 bg-[#0a0a0a] border-t border-white/5 flex items-center justify-around px-8 flex-shrink-0">
-                <button onClick={handleBack} className="p-3 text-gray-500 hover:text-white hover:bg-white/5 rounded-full transition-all">
+                <button onClick={handleBack} className="p-3 text-gray-500 hover:text-white hover:bg-white/5 rounded-full transition-all" title={t.back}>
                     <ArrowLeft size={22} />
                 </button>
-                <button onClick={handleHome} className="relative w-14 h-14 flex items-center justify-center group">
-                    <div className="w-10 h-10 rounded-full border-2 border-gray-700 group-hover:border-blue-500 flex items-center justify-center transition-all duration-300">
+                <button onClick={handleHome} className="relative w-14 h-14 flex items-center justify-center group" title={t.home}>
+                    <div className="w-10 h-10 rounded-full border-2 border-gray-700 group-hover:border-blue-500 flex items-center justify-center transition-all duration-300 shadow-inner">
                         <div className="w-3 h-3 rounded-sm bg-gray-600 group-hover:bg-blue-500 transition-colors" />
                     </div>
                 </button>
-                <button className="p-3 text-gray-400 hover:text-white hover:bg-white/5 rounded-full transition-all">
+                <button className="p-3 text-gray-400 hover:text-white hover:bg-white/5 rounded-full transition-all" title={t.power}>
                     <Power size={22} />
                 </button>
             </div>

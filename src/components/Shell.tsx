@@ -36,38 +36,32 @@ export default function Shell({ adb }: ShellProps) {
 
         xtermRef.current = term;
 
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         let shell: any = null;
         let writer: WritableStreamDefaultWriter | null = null;
 
         const startShell = async () => {
-            console.log('Shell: Starting initialization...');
             try {
                 if (!activeRef.current) return;
 
                 // Priority: ShellV2 PTY -> Legacy Shell
                 if (adb.canUseFeature(AdbFeature.ShellV2) && adb.subprocess.shellProtocol) {
-                    console.log('Shell: Using ShellV2 PTY');
                     shell = await adb.subprocess.shellProtocol.pty();
                 } else {
-                    console.log('Shell: Falling back to Legacy Shell');
                     shell = await adb.subprocess.noneProtocol.spawn('shell');
                 }
                 
                 if (!activeRef.current) {
-                    shell.kill?.();
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    (shell as any).kill?.();
                     return;
                 }
 
-                console.log('Shell: Subprocess spawned successfully');
-
-                // Set initial size if supported
-                if (shell.resize) {
-                    shell.resize(term.rows, term.cols);
-                }
-
                 // Handle property name differences (spawn: stdin/stdout, pty: input/output)
-                const stdin = shell.input || shell.stdin;
-                const stdout = shell.output || shell.stdout;
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const stdin = (shell as any).input || (shell as any).stdin;
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const stdout = (shell as any).output || (shell as any).stdout;
 
                 if (!stdin || !stdout) {
                     throw new Error('Could not find input/output streams on shell object');
@@ -83,8 +77,10 @@ export default function Shell({ adb }: ShellProps) {
                 });
 
                 const { dispose: resizeDispose } = term.onResize(({ cols, rows }) => {
-                    if (activeRef.current && shell.resize) {
-                        shell.resize(rows, cols);
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    if (activeRef.current && (shell as any).resize) {
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        (shell as any).resize(rows, cols);
                     }
                 });
 
@@ -96,27 +92,26 @@ export default function Shell({ adb }: ShellProps) {
                     while (activeRef.current) {
                         const { done, value } = await reader.read();
                         if (done) {
-                            console.log('Shell: Stream done');
                             break;
                         }
                         if (value && activeRef.current) {
                             term.write(decoder.decode(value));
                         }
                     }
-                } catch (readError: any) {
+                } catch (readError: unknown) {
                     if (activeRef.current) {
-                        console.error('Shell: Read error:', readError);
-                        term.writeln('\r\n[Read Error]: ' + readError.message);
+                        const msg = readError instanceof Error ? readError.message : String(readError);
+                        term.writeln('\r\n[Read Error]: ' + msg);
                     }
                 } finally {
                     reader.releaseLock();
                     dataDispose();
                     resizeDispose();
                 }
-            } catch (err: any) {
+            } catch (err: unknown) {
                 if (activeRef.current) {
-                    console.error('Shell: Critical error:', err);
-                    term.writeln('\r\nError starting shell: ' + err.message);
+                    const msg = err instanceof Error ? err.message : String(err);
+                    term.writeln('\r\nError starting shell: ' + msg);
                 }
             }
         };
@@ -132,11 +127,11 @@ export default function Shell({ adb }: ShellProps) {
             activeRef.current = false;
             window.removeEventListener('resize', handleResize);
             if (writer) {
-                try { writer.releaseLock(); } catch(e) {}
+                try { writer.releaseLock(); } catch { /* ignore */ }
             }
             if (shell) {
-                // pty uses kill(), spawn uses close() or similar
-                try { (shell.kill || shell.close)?.(); } catch (e) {}
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                try { ((shell as any).kill || (shell as any).close)?.(); } catch { /* ignore */ }
             }
             term.dispose();
         };

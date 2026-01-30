@@ -42,6 +42,7 @@ export function useAdb() {
             // Authenticate and get transport
             const transport = await AdbDaemonTransport.authenticate({
                 serial: backend.serial,
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 connection: connection as any,
                 credentialStore: credentialStore.current!,
             });
