@@ -26,21 +26,19 @@ export default function ScreenMirror({adb, onClose}: ScreenMirrorProps) {
     const videoContainerRef = useRef<HTMLDivElement>(null);
     const mainContainerRef = useRef<HTMLDivElement>(null);
 
-    // 初始位置
+    // --- 核心状态 ---
     const [initialPos] = useState({x: 100, y: 100});
+    // 增加这个状态来控制拖拽时的样式优化
+    const [isDraggingState, setIsDraggingState] = useState(false);
 
-    // 使用 Ref 存储坐标，完全脱离 React 渲染周期
+    // Ref 存储坐标，用于高性能计算
     const dragRef = useRef({
-        isDragging: false,
         startX: 0,
         startY: 0,
-        // 当前元素的 translate 偏移量
         currentX: 0,
         currentY: 0,
-        // 拖拽开始时的 translate 偏移量
         lastX: 0,
         lastY: 0,
-        // 动画帧 ID
         frameId: 0
     });
 
@@ -54,25 +52,30 @@ export default function ScreenMirror({adb, onClose}: ScreenMirrorProps) {
     const rendererRef = useRef<WebGLVideoFrameRenderer | null>(null);
     const videoSizeRef = useRef({width: 0, height: 0});
 
-    // --- GPU 加速拖拽逻辑 Start ---
+    // --- 极速拖拽逻辑 ---
     const updatePosition = () => {
         if (!mainContainerRef.current) return;
         const {currentX, currentY} = dragRef.current;
-        // 使用 translate3d 强制开启 GPU 硬件加速
+        // 使用 translate3d 开启 GPU 加速
         mainContainerRef.current.style.transform = `translate3d(${currentX}px, ${currentY}px, 0)`;
-        dragRef.current.frameId = 0; // 重置 frameId
+        dragRef.current.frameId = 0;
     };
 
     const handleMouseDown = (e: React.MouseEvent) => {
         if ((e.target as HTMLElement).closest('.drag-handle')) {
             e.preventDefault();
-            dragRef.current.isDragging = true;
+            // 触发 React 状态更新，用于切换 CSS 类（禁用 pointer-events 等）
+            setIsDraggingState(true);
+
             dragRef.current.startX = e.clientX;
             dragRef.current.startY = e.clientY;
-
-            // 记录当前的偏移量作为起点
             dragRef.current.lastX = dragRef.current.currentX;
             dragRef.current.lastY = dragRef.current.currentY;
+
+            // 强制立即移除 transition，防止拖拽开始时有延迟
+            if (mainContainerRef.current) {
+                mainContainerRef.current.style.transition = 'none';
+            }
 
             window.addEventListener('mousemove', handleGlobalMouseMove, {passive: false});
             window.addEventListener('mouseup', handleGlobalMouseUp);
@@ -80,45 +83,36 @@ export default function ScreenMirror({adb, onClose}: ScreenMirrorProps) {
     };
 
     const handleGlobalMouseMove = useCallback((e: MouseEvent) => {
-        if (!dragRef.current.isDragging) return;
-        e.preventDefault(); // 防止选中文字或触发其他浏览器行为
-
+        e.preventDefault();
         const dx = e.clientX - dragRef.current.startX;
         const dy = e.clientY - dragRef.current.startY;
 
-        // 更新坐标数据
         dragRef.current.currentX = dragRef.current.lastX + dx;
         dragRef.current.currentY = dragRef.current.lastY + dy;
 
-        // 使用 requestAnimationFrame 节流，避免高频调用阻塞主线程
         if (dragRef.current.frameId === 0) {
             dragRef.current.frameId = requestAnimationFrame(updatePosition);
         }
     }, []);
 
     const handleGlobalMouseUp = useCallback(() => {
-        dragRef.current.isDragging = false;
+        setIsDraggingState(false);
         if (dragRef.current.frameId !== 0) {
             cancelAnimationFrame(dragRef.current.frameId);
             dragRef.current.frameId = 0;
-            // 确保最后一次位置被更新
             updatePosition();
         }
         window.removeEventListener('mousemove', handleGlobalMouseMove);
         window.removeEventListener('mouseup', handleGlobalMouseUp);
-    }, [handleGlobalMouseMove]); // 依赖项
+    }, [handleGlobalMouseMove]);
 
     useEffect(() => {
         return () => {
-            // 清理
             window.removeEventListener('mousemove', handleGlobalMouseMove);
             window.removeEventListener('mouseup', handleGlobalMouseUp);
-            if (dragRef.current.frameId !== 0) {
-                cancelAnimationFrame(dragRef.current.frameId);
-            }
+            if (dragRef.current.frameId !== 0) cancelAnimationFrame(dragRef.current.frameId);
         };
     }, [handleGlobalMouseMove, handleGlobalMouseUp]);
-    // --- GPU 加速拖拽逻辑 End ---
 
     const injectTouch = useCallback(async (action: AndroidMotionEventAction, e: MouseEvent | TouchEvent) => {
         const client = clientRef.current;
@@ -193,7 +187,9 @@ export default function ScreenMirror({adb, onClose}: ScreenMirrorProps) {
                 clientRef.current = client;
                 client.output.pipeTo(new WritableStream({
                     write(line) {
-                        if (line.includes('INJECT_EVENTS permission')) setPermissionWarning(true);
+                        if (line.includes('INJECT_EVENTS permission')) {
+                            setPermissionWarning(true);
+                        }
                     }
                 })).catch(() => {
                 });
@@ -283,21 +279,30 @@ export default function ScreenMirror({adb, onClose}: ScreenMirrorProps) {
     return (
         <div
             ref={mainContainerRef}
-            className="fixed z-[200] bg-[#0a0a0a] rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.5)] border border-white/10 overflow-hidden flex flex-col animate-in fade-in zoom-in duration-200"
+            // 移除了 transition-all, duration-200.
+            // 只保留必要的布局类。animate-in 仍然可以用，但它通常只在挂载时生效。
+            className={`fixed z-[200] bg-[#0a0a0a] rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.5)] border border-white/10 overflow-hidden flex flex-col animate-in fade-in zoom-in ${
+                // 拖拽时，降低阴影复杂度，提升渲染性能
+                isDraggingState ? 'shadow-none' : ''
+            }`}
             onContextMenu={(e) => e.preventDefault()}
             style={{
                 left: initialPos.x,
                 top: initialPos.y,
                 width: '360px',
                 height: '760px',
-                // 提示浏览器为 transform 创建独立的合成层
+                // 强制开启 GPU 独立层
                 willChange: 'transform',
-                // 移除 left/top 的 transition，否则拖拽会有延迟感
-                transition: 'none'
+                // 绝对禁止 transition，这是不跟手的罪魁祸首！
+                transition: 'none',
+                // 拖拽时禁用内部所有鼠标事件，防止 iframe/canvas 抢夺资源
+                pointerEvents: isDraggingState ? 'none' : 'auto'
             }}
         >
             <div
                 onMouseDown={handleMouseDown}
+                // 拖拽手柄需要 pointer-events: auto 才能接收事件，即使父元素禁用了
+                style={{pointerEvents: 'auto'}}
                 className="drag-handle h-12 bg-gradient-to-b from-gray-800 to-gray-900 border-b border-white/5 flex items-center justify-between px-4 cursor-grab active:cursor-grabbing flex-shrink-0 select-none"
             >
                 <div className="flex items-center gap-3">
@@ -309,7 +314,6 @@ export default function ScreenMirror({adb, onClose}: ScreenMirrorProps) {
                     <button
                         onClick={() => setRetryKey(prev => prev + 1)}
                         className="p-2 hover:bg-white/10 text-gray-400 hover:text-white rounded-full transition-all"
-                        title={t.reconnect}
                     >
                         <RefreshCw size={16} className={loading ? "animate-spin" : ""}/>
                     </button>
@@ -325,15 +329,12 @@ export default function ScreenMirror({adb, onClose}: ScreenMirrorProps) {
             <div className="flex-1 relative bg-black flex items-center justify-center overflow-hidden">
                 {loading && (
                     <div className="absolute inset-0 z-30 bg-black flex flex-col items-center justify-center gap-4">
-                        <div className="relative">
-                            <div
-                                className="w-12 h-12 border-4 border-blue-500/20 border-t-blue-500 rounded-full animate-spin"/>
-                        </div>
+                        <div
+                            className="w-12 h-12 border-4 border-blue-500/20 border-t-blue-500 rounded-full animate-spin"/>
                         <span
                             className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">{t.mirrorLoading}</span>
                     </div>
                 )}
-
                 {error && (
                     <div
                         className="absolute inset-0 z-40 bg-black/90 backdrop-blur-sm flex flex-col items-center justify-center p-8 text-center">
@@ -344,10 +345,9 @@ export default function ScreenMirror({adb, onClose}: ScreenMirrorProps) {
                                 className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-lg transition-all">{t.reconnect}</button>
                     </div>
                 )}
-
                 {permissionWarning && !error && (
                     <div
-                        className="absolute top-4 left-4 right-4 z-50 bg-orange-500/90 backdrop-blur-md border border-orange-400/50 p-3 rounded-xl shadow-2xl flex items-start gap-3 animate-in slide-in-from-top">
+                        className="absolute top-4 left-4 right-4 z-50 bg-orange-500/90 backdrop-blur-md border border-orange-400/50 p-3 rounded-xl shadow-2xl flex items-start gap-3">
                         <AlertCircle className="text-white shrink-0" size={18}/>
                         <div className="flex-1">
                             <p className="text-[11px] font-bold text-white">{t.permTitle}</p>
@@ -362,7 +362,9 @@ export default function ScreenMirror({adb, onClose}: ScreenMirrorProps) {
             </div>
 
             <div
-                className="h-16 bg-[#0a0a0a] border-t border-white/5 flex items-center justify-around px-8 flex-shrink-0">
+                style={{pointerEvents: 'auto'}}
+                className="h-16 bg-[#0a0a0a] border-t border-white/5 flex items-center justify-around px-8 flex-shrink-0"
+            >
                 <button onClick={handleBack}
                         className="p-3 text-gray-500 hover:text-white hover:bg-white/5 rounded-full transition-all"
                         title={t.back}>
