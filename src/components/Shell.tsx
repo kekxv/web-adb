@@ -1,16 +1,16 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
-import { Terminal } from '@xterm/xterm';
-import { FitAddon } from '@xterm/addon-fit';
+import {useEffect, useRef} from 'react';
+import {Terminal} from '@xterm/xterm';
+import {FitAddon} from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
-import { Adb, AdbFeature } from '@yume-chan/adb';
+import {Adb, AdbFeature} from '@yume-chan/adb';
 
 interface ShellProps {
     adb: Adb;
 }
 
-export default function Shell({ adb }: ShellProps) {
+export default function Shell({adb}: ShellProps) {
     const terminalRef = useRef<HTMLDivElement>(null);
     const xtermRef = useRef<Terminal | null>(null);
     const activeRef = useRef(true);
@@ -48,9 +48,34 @@ export default function Shell({ adb }: ShellProps) {
                 if (adb.canUseFeature(AdbFeature.ShellV2) && adb.subprocess.shellProtocol) {
                     shell = await adb.subprocess.shellProtocol.pty();
                 } else {
-                    shell = await adb.subprocess.noneProtocol.spawn('shell');
+                    try {
+                        shell = await adb.subprocess.noneProtocol.spawn('shell');
+                        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                    } catch (e: unknown) {
+                        let socket;
+                        try {
+                            socket = await adb.createSocket('shell:');
+                            // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                        } catch (e1: unknown) {
+                            socket = await adb.createSocket('exec:/bin/sh');
+                        }
+                        shell = {
+                            input: socket.writable,
+                            output: socket.readable,
+                            resize: (rows: number, cols: number) => {
+                                const encoder = new TextEncoder();
+                                // 构造 stty 命令
+                                // 注意：这就好比你在键盘上飞快地打了一行命令
+                                const cmd = `stty cols ${cols} rows ${rows}\n`;
+                                writer?.write(encoder.encode(cmd)).catch(() => {
+                                });
+                            },
+                            kill: () => socket.close(),
+                            close: () => socket.close()
+                        };
+                    }
                 }
-                
+
                 if (!activeRef.current) {
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     (shell as any).kill?.();
@@ -69,14 +94,15 @@ export default function Shell({ adb }: ShellProps) {
 
                 writer = stdin.getWriter();
                 const encoder = new TextEncoder();
-                
-                const { dispose: dataDispose } = term.onData((data) => {
+
+                const {dispose: dataDispose} = term.onData((data) => {
                     if (activeRef.current && writer) {
-                        writer.write(encoder.encode(data)).catch(() => {});
+                        writer.write(encoder.encode(data)).catch(() => {
+                        });
                     }
                 });
 
-                const { dispose: resizeDispose } = term.onResize(({ cols, rows }) => {
+                const {dispose: resizeDispose} = term.onResize(({cols, rows}) => {
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     if (activeRef.current && (shell as any).resize) {
                         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -90,7 +116,7 @@ export default function Shell({ adb }: ShellProps) {
                 const decoder = new TextDecoder();
                 try {
                     while (activeRef.current) {
-                        const { done, value } = await reader.read();
+                        const {done, value} = await reader.read();
                         if (done) {
                             break;
                         }
@@ -127,11 +153,17 @@ export default function Shell({ adb }: ShellProps) {
             activeRef.current = false;
             window.removeEventListener('resize', handleResize);
             if (writer) {
-                try { writer.releaseLock(); } catch { /* ignore */ }
+                try {
+                    writer.releaseLock();
+                } catch { /* ignore */
+                }
             }
             if (shell) {
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                try { ((shell as any).kill || (shell as any).close)?.(); } catch { /* ignore */ }
+                try {
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    ((shell as any).kill || (shell as any).close)?.();
+                } catch { /* ignore */
+                }
             }
             term.dispose();
         };
@@ -139,7 +171,7 @@ export default function Shell({ adb }: ShellProps) {
 
     return (
         <div className="w-full h-full bg-[#1e1e1e] rounded-lg overflow-hidden border border-gray-700 shadow-xl min-h-0">
-            <div ref={terminalRef} className="w-full h-full p-2" />
+            <div ref={terminalRef} className="w-full h-full p-2"/>
         </div>
     );
 }

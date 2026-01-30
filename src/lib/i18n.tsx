@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, {createContext, useContext, useState, useEffect} from 'react';
 
 export type Language = 'en' | 'zh';
 
@@ -109,11 +109,12 @@ const I18nContext = createContext<{
     t: Translations;
 }>({
     lang: 'en',
-    setLang: () => {},
+    setLang: () => {
+    },
     t: translations.en,
 });
 
-export function I18nProvider({ children }: { children: React.ReactNode }) {
+export function I18nProvider({children}: { children: React.ReactNode }) {
     // 初始状态必须固定为 en，以匹配服务端渲染结果，防止 Hydration Mismatch
     const [lang, setLang] = useState<Language>('en');
 
@@ -124,7 +125,6 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
             setLang(saved);
         } else {
             const browserLang = navigator.language.startsWith('zh') ? 'zh' : 'en';
-            // eslint-disable-next-line react-hooks/set-state-in-effect
             setLang(browserLang);
         }
     }, []);
@@ -135,7 +135,7 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
     };
 
     return (
-        <I18nContext.Provider value={{ lang, setLang: handleSetLang, t: translations[lang] }}>
+        <I18nContext.Provider value={{lang, setLang: handleSetLang, t: translations[lang]}}>
             {children}
         </I18nContext.Provider>
     );
